@@ -63,10 +63,10 @@ class RemoteCommand(pb.Referenceable):
     def __repr__(self):
         return "<RemoteCommand '%s' at %d>" % (self.remote_command, id(self))
 
-    def run(self, step, remote):
+    def run(self, step, conn):
         self.active = True
         self.step = step
-        self.remote = remote
+        self.conn = conn
 
         # generate a new command id
         cmd_id = RemoteCommand._commandCounter
@@ -112,8 +112,7 @@ class RemoteCommand(pb.Referenceable):
         # We will receive remote_update messages as the command runs.
         # We will get a single remote_complete when it finishes.
         # We should fire self.deferred when the command is done.
-        d = self.remote.callRemote("startCommand", self, self.commandID,
-                                   self.remote_command, self.args)
+        d = self.conn.startCommands(self, self.commandID, self.remote_command, self.args)
         return d
 
     def _finished(self, failure=None):
@@ -136,12 +135,12 @@ class RemoteCommand(pb.Referenceable):
         if not self.active:
             log.msg(" but this RemoteCommand is already inactive")
             return defer.succeed(None)
-        if not self.remote:
-            log.msg(" but our .remote went away")
+        if not self.conn:
+            log.msg(" but our .conn went away")
             return defer.succeed(None)
         if isinstance(why, Failure) and why.check(error.ConnectionLost):
             log.msg("RemoteCommand.disconnect: lost slave")
-            self.remote = None
+            self.conn = None
             self._finished(why)
             return defer.succeed(None)
 
