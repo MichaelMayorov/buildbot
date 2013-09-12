@@ -20,7 +20,7 @@ from buildbot import config
 
 class BuildslaveRegistration(object):
 
-    __slots__ = [ 'master', 'buildslave' ]
+    __slots__ = [ 'master', 'buildslave', 'pbReg' ]
 
     def __init__(self, master, buildslave):
         self.master = master
@@ -41,9 +41,12 @@ class BuildslaveRegistration(object):
     def update(self, slave_config, global_config):
         # For most protocols, there's nothing to do, but for PB we must
         # update the registration in case the port or password has changed.
-        yield self.master.buildslaves.pb.updateRegistration(
+        self.pbReg = yield self.master.buildslaves.pb.updateRegistration(
                 slave_config.slavename, slave_config.password,
                 global_config.protocols['pb']['port'])
+
+    def getPBPort(self):
+        return self.pbReg.getPort()
 
 
 class BuildslaveManager(config.ReconfigurableServiceMixin,

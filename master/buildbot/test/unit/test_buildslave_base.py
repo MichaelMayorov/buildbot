@@ -18,7 +18,7 @@ from twisted.trial import unittest
 from twisted.internet import defer, task, reactor
 from buildbot import config, locks
 from buildbot.buildslave import base
-from buildbot.test.fake import fakemaster, pbmanager, fakedb
+from buildbot.test.fake import fakemaster, pbmanager, fakedb, bslavemanager
 from buildbot.test.fake.botmaster import FakeBotMaster
 
 class TestAbstractBuildSlave(unittest.TestCase):
@@ -38,7 +38,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         slave = self.ConcreteBuildSlave(name, password, **kwargs)
         slave.master = self.master
         slave.botmaster = self.botmaster
-        return slave   
+        return slave
 
     def test_constructor_minimal(self):
         bs = self.ConcreteBuildSlave('bot', 'pass')
@@ -82,8 +82,8 @@ class TestAbstractBuildSlave(unittest.TestCase):
     def do_test_reconfigService(self, old, old_port, new, new_port):
         old.master = self.master
         if old_port:
-            self.old_registration = old.registration = \
-                    pbmanager.FakeRegistration(self.master.pbmanager, old_port, old.slavename)
+            self.old_registration = old.registration = mock.Mock()
+#                    bslavemanager.FakeBuildslaveRegistration(old.master, old)
             old.registered_port = old_port
         old.missing_timer = mock.Mock(name='missing_timer')
         yield old.startService()
@@ -93,6 +93,12 @@ class TestAbstractBuildSlave(unittest.TestCase):
         new_config.slaves = [ new ]
 
         yield old.reconfigService(new_config)
+
+        if old_port:
+            print "old.registration", old.registration
+            print "old.registration.update", old.registration.update
+            old.registration.update.assert_called_with(new, new_config)
+
 
     @defer.inlineCallbacks
     def test_reconfigService_attrs(self):
@@ -118,7 +124,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         self.assertEqual(old.missing_timeout, 121)
         self.assertEqual(old.properties.getProperty('a'), 'c')
         self.assertEqual(old.keepalive_interval, 61)
-        self.assertEqual(self.master.pbmanager._registrations, [])
+        self.assertEqual(self.master.buildslaves.registrations, {})
         self.assertTrue(old.updateSlave.called)
 
     @defer.inlineCallbacks
@@ -281,7 +287,23 @@ class TestAbstractBuildSlave(unittest.TestCase):
                 if response:
                     return response(*args)
                 return defer.succeed(None)
-        
+
+            def remotePrint(self, message):
+                return self.callRemote('print', message)
+
+            def remoteGetSlaveInfo(self):
+                return self.callRemote('getSlaveInfo')
+
+            def notifyOnDisconnect(self, callback):
+                # Called during attached()
+                pass
+
+            def remoteSetBuilderList(self, builders):
+                return self.callRemote('setBuilderList', builders)
+#                return defer.succeed(
+#                    dict([(name, 'fake!') for (name, builddir) in builders])
+#                )
+
         return Bot()
 
     @defer.inlineCallbacks
@@ -293,12 +315,10 @@ class TestAbstractBuildSlave(unittest.TestCase):
         yield slave.attached(bot)
 
         self.assertEqual(True, slave.slave_status.isConnected())
-        self.assertEqual(5, len(bot.commands))
+        self.assertEqual(3, len(bot.commands))
         self.assertEqual(bot.commands[0], ('print', 'attached'))
         self.assertEqual(bot.commands[1], ('getSlaveInfo',))
-        self.assertEqual(bot.commands[2], ('getVersion',))
-        self.assertEqual(bot.commands[3], ('getCommands',))
-        self.assertEqual(bot.commands[4], ('setBuilderList',[]))
+        self.assertEqual(bot.commands[2], ('setBuilderList',[]))
 
     @defer.inlineCallbacks
     def test_attached_callRemote_print_raises(self):
@@ -311,7 +331,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
 
         # just check that things still go on
         self.assertEqual(True, slave.slave_status.isConnected())
-        self.assertEqual(5, len(bot.commands))
+        self.assertEqual(3, len(bot.commands))
 
     @defer.inlineCallbacks
     def test_attached_callRemote_getSlaveInfo(self):
@@ -319,6 +339,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         yield slave.startService()
 
         ENVIRON = {}
+        COMMANDS = {'cmd1': '1', 'cmd2': '1'}
 
         bot = self.createRemoteBot()
         bot.response['getSlaveInfo'] = mock.Mock(return_value=defer.succeed({
@@ -327,13 +348,15 @@ class TestAbstractBuildSlave(unittest.TestCase):
             'access_uri': 'TheURI',
             'environ': ENVIRON,
             'basedir': 'TheBaseDir',
-            'system': 'TheSlaveSystem'
+            'system': 'TheSlaveSystem',
+            'version': 'version',
+            'commands': COMMANDS,
         }))
         yield slave.attached(bot)
 
         # check that things were all good
         self.assertEqual(True, slave.slave_status.isConnected())
-        self.assertEqual(5, len(bot.commands))
+        self.assertEqual(3, len(bot.commands))
 
         # check the values get set right
         self.assertEqual(slave.slave_status.getAdmin(),     "TheAdmin")
@@ -342,40 +365,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         self.assertEqual(slave.slave_environ, ENVIRON)
         self.assertEqual(slave.slave_basedir, 'TheBaseDir')
         self.assertEqual(slave.slave_system,  'TheSlaveSystem')
-
-    @defer.inlineCallbacks
-    def test_attached_callRemote_getVersion(self):
-        slave = self.createBuildslave()
-        yield slave.startService()
-
-        bot = self.createRemoteBot()
-        bot.response['getVersion'] = mock.Mock(return_value=defer.succeed("TheVersion"))
-        yield slave.attached(bot)
-
-        # check that things were all good
-        self.assertEqual(True, slave.slave_status.isConnected())
-        self.assertEqual(5, len(bot.commands))
-
-        # check the values get set right
-        self.assertEqual(slave.slave_status.getVersion(), "TheVersion")
-
-    @defer.inlineCallbacks
-    def test_attached_callRemote_getCommands(self):
-        slave = self.createBuildslave()
-        yield slave.startService()
-
-        COMMANDS = ['a','b']
-
-        bot = self.createRemoteBot()
-        bot.response['getCommands'] = mock.Mock(return_value=defer.succeed(COMMANDS))
-        yield slave.attached(bot)
-
-        # check that things were all good
-        self.assertEqual(True, slave.slave_status.isConnected())
-        self.assertEqual(5, len(bot.commands))
-
-        # check the values get set right
-        self.assertEqual(slave.slave_commands, COMMANDS)
+        self.assertEqual(slave.slave_commands,  COMMANDS)
 
     @defer.inlineCallbacks
     def test_attached_callsMaybeStartBuildsForSlave(self):
@@ -402,11 +392,11 @@ class TestAbstractBuildSlave(unittest.TestCase):
         yield slave.startService()
 
         bot = self.createRemoteBot()
-        bot.response['getVersion'] = mock.Mock(return_value=defer.succeed("TheVersion"))
         bot.response['getSlaveInfo'] = mock.Mock(return_value=defer.succeed({
             'admin':   'TheAdmin',
             'host':    'TheHost',
             'access_uri': 'TheURI',
+            'version': 'TheVersion',
         }))
         yield slave.attached(bot)
 
@@ -417,7 +407,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
 
         # and the db is updated too:
         buildslave = yield self.master.db.buildslaves.getBuildslaveByName("bot")
-        
+
         self.assertEqual(buildslave['slaveinfo']['admin'], 'TheAdmin')
         self.assertEqual(buildslave['slaveinfo']['host'], 'TheHost')
         self.assertEqual(buildslave['slaveinfo']['access_uri'], 'TheURI')

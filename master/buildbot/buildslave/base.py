@@ -228,6 +228,7 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin,
         new = self.findNewSlaveInstance(new_config)
 
         assert self.slavename == new.slavename
+        self.password = new.password
 
         # update our records with the buildslave manager
         if not self.registration:

@@ -46,6 +46,7 @@ class Listener(base.Listener):
                 reg = self.master.pbmanager.register(
                         portStr, username, password, self._getPerspective)
                 self._registrations[username] = (password, portStr, reg)
+                defer.returnValue(reg)
 
     @defer.inlineCallbacks
     def _getPerspective(self, mind, buildslaveName):
@@ -119,8 +120,12 @@ class Connection(base.Connection, pb.Avatar):
         return dl
 
     def remoteSetBuilderList(self, builders):
-        # TODO: cache the remote references for use later
-        return self.mind.callRemote('setBuilderList', builders)
+        def cache_builders(builders):
+            self.builders = builders
+            return builders
+        d = self.mind.callRemote('setBuilderList', builders)
+        d.addCallback(cache_builders)
+        return d
 
     # perspective methods called by the slave
 
@@ -131,7 +136,8 @@ class Connection(base.Connection, pb.Avatar):
         log.msg("slave %s wants to shut down" % self.slavename)
         # TODO: support that..
 
-    def startCommands(self, RCInstance, commandID, remote_command, args):
-        return self.mind.callRemote('startCommand',
+    def startCommands(self, RCInstance, builder_name, commandID, remote_command, args):
+        slavebuilder = self.builders.get(builder_name)
+        return slavebuilder.callRemote('startCommand',
             RCInstance, commandID, remote_command, args
         )

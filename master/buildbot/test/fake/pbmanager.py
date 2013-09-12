@@ -28,6 +28,7 @@ class FakePBManager(service.MultiService):
         if (portstr, username) not in self._registrations:
             reg = FakeRegistration(self, portstr, username)
             self._registrations.append((portstr,username,password))
+            print "REGISTRATION", self._registrations
             return reg
         else:
             raise KeyError, ("username '%s' is already registered on port %s"
